@@ -65,5 +65,36 @@
     return read();
   }
 
-  window.SDCData = { defaults, read, write, reset, storageKey: STORAGE_KEY };
+  function isLocalPreview() {
+    return location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  }
+
+  async function load() {
+    try {
+      const response = await fetch('/api/content', { cache: 'no-store' });
+      if (response.ok) return { ...clone(defaults), ...(await response.json()), submissions: [], members: [] };
+    } catch (error) {
+      if (!isLocalPreview()) return clone(defaults);
+    }
+    return read();
+  }
+
+  async function submit(endpoint, record) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(record)
+      });
+      if (response.status === 404 && isLocalPreview()) return false;
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Your request could not be saved.');
+      return true;
+    } catch (error) {
+      if (isLocalPreview() && error instanceof TypeError) return false;
+      throw error;
+    }
+  }
+
+  window.SDCData = { defaults, read, write, reset, load, submit, storageKey: STORAGE_KEY };
 })();

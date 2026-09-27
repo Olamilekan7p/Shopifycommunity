@@ -1,5 +1,8 @@
 (() => {
   let data = window.SDCData.read();
+  let submissions = data.submissions || [];
+  let members = data.members || [];
+  let remoteStorage = false;
   const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const prettyDate = value => new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   const toast = message => {
@@ -8,24 +11,44 @@
     element.classList.add('visible');
     window.setTimeout(() => element.classList.remove('visible'), 3000);
   };
-  const save = message => {
-    window.SDCData.write(data);
-    toast(message || 'Changes saved in this browser.');
-    renderAll();
-  };
+  async function save(message, collection = 'content') {
+    try {
+      if (remoteStorage) {
+        const body = collection === 'all'
+          ? { content: data, submissions, members }
+          : collection === 'content'
+            ? { content: data }
+            : { [collection]: collection === 'submissions' ? submissions : members };
+        const response = await fetch('/api/admin/data', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (response.status === 401) return window.location.replace('/admin/login');
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Changes could not be saved.');
+      } else {
+        window.SDCData.write({ ...data, submissions, members });
+      }
+      toast(message || 'Changes saved.');
+      renderAll();
+    } catch (error) {
+      toast(error.message || 'Changes could not be saved.');
+    }
+  }
 
   function renderOverview() {
-    const pending = data.submissions.filter(item => item.status !== 'Reviewed').length;
-    document.getElementById('total-members').textContent = data.members.length;
+    const pending = submissions.filter(item => item.status !== 'Reviewed').length;
+    document.getElementById('total-members').textContent = members.length;
     document.getElementById('total-submissions').textContent = pending;
     document.getElementById('total-stores').textContent = data.stores.length;
     document.getElementById('total-events').textContent = data.events.filter(item => item.status === 'upcoming').length;
     document.getElementById('submission-badge').textContent = pending;
-    document.getElementById('member-badge').textContent = data.members.length;
-    document.getElementById('submission-count').textContent = data.submissions.length;
-    document.getElementById('member-count').textContent = data.members.length;
+    document.getElementById('member-badge').textContent = members.length;
+    document.getElementById('submission-count').textContent = submissions.length;
+    document.getElementById('member-count').textContent = members.length;
     document.getElementById('admin-date').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-    const latest = [...data.submissions.map(item => ({ ...item, kind: 'store' })), ...data.members.map(item => ({ ...item, kind: 'member' }))].sort((a, b) => new Date(b.submittedAt || b.joinedAt) - new Date(a.submittedAt || a.joinedAt)).slice(0, 5);
+    const latest = [...submissions.map(item => ({ ...item, kind: 'store' })), ...members.map(item => ({ ...item, kind: 'member' }))].sort((a, b) => new Date(b.submittedAt || b.joinedAt) - new Date(a.submittedAt || a.joinedAt)).slice(0, 5);
     document.getElementById('recent-activity').innerHTML = latest.length ? latest.map(item => `<div class="activity-row"><span class="activity-avatar ${item.kind === 'store' ? 'avatar-store' : ''}">${escapeHtml((item.name || '?').slice(0, 1).toUpperCase())}</span><span class="activity-copy"><b>${escapeHtml(item.name || 'New community member')}</b><small>${item.kind === 'store' ? `Introduced ${escapeHtml(item.storeName || 'a store')}` : 'Joined as a shopper'}</small></span><time>${prettyDate(item.submittedAt || item.joinedAt)}</time></div>`).join('') : '<div class="empty-state"><span>✳</span><b>Your community is ready to meet.</b><p>New shopper signups and store introductions will appear here.</p></div>';
   }
 
@@ -84,15 +107,15 @@
 
   function renderSubmissions() {
     const host = document.getElementById('submission-list');
-    host.innerHTML = data.submissions.length ? data.submissions.map((item, index) => `<article class="admin-record submission-record"><div class="record-mark submission-mark">${escapeHtml((item.storeName || '?').slice(0, 1).toLowerCase())}</div><div class="record-main"><div class="record-kicker">${escapeHtml(item.category || 'CATEGORY NOT SPECIFIED')} · ${prettyDate(item.submittedAt)}</div><h3>${escapeHtml(item.storeName || 'Store submission')} <span class="submission-status ${item.status === 'Reviewed' ? 'status-reviewed' : ''}">${escapeHtml(item.status || 'New')}</span></h3><p>${escapeHtml(item.name)} · <a href="mailto:${escapeHtml(item.email)}">${escapeHtml(item.email)}</a> · <a href="${escapeHtml(item.website)}" target="_blank" rel="noreferrer">Visit website ↗</a></p><div class="submission-details"><span><b>Ships to</b>${escapeHtml(item.shipping || 'Not specified')}</span><span><b>Delivery estimate</b>${escapeHtml(item.delivery || 'Not specified')}</span><span><b>Featured products</b>${escapeHtml(item.products || 'Not specified')}</span><span><b>Current offers</b>${escapeHtml(item.offers || 'None shared')}</span></div>${item.notes ? `<p class="submission-note-admin">${escapeHtml(item.notes)}</p>` : ''}</div><div class="record-actions"><button data-review-submission="${index}">${item.status === 'Reviewed' ? 'Mark new' : 'Mark reviewed'}</button><button data-delete-submission="${index}" class="record-delete">Remove</button></div></article>`).join('') : '<div class="admin-panel empty-state"><span>↙</span><b>No store introductions yet.</b><p>Submissions from the homepage will arrive here.</p></div>';
-    host.querySelectorAll('[data-review-submission]').forEach(button => button.onclick = () => { const item = data.submissions[Number(button.dataset.reviewSubmission)]; item.status = item.status === 'Reviewed' ? 'New' : 'Reviewed'; save('Submission status updated.'); });
-    host.querySelectorAll('[data-delete-submission]').forEach(button => button.onclick = () => { data.submissions.splice(Number(button.dataset.deleteSubmission), 1); save('Submission removed.'); });
+    host.innerHTML = submissions.length ? submissions.map((item, index) => `<article class="admin-record submission-record"><div class="record-mark submission-mark">${escapeHtml((item.storeName || '?').slice(0, 1).toLowerCase())}</div><div class="record-main"><div class="record-kicker">${escapeHtml(item.category || 'CATEGORY NOT SPECIFIED')} · ${prettyDate(item.submittedAt)}</div><h3>${escapeHtml(item.storeName || 'Store submission')} <span class="submission-status ${item.status === 'Reviewed' ? 'status-reviewed' : ''}">${escapeHtml(item.status || 'New')}</span></h3><p>${escapeHtml(item.name)} · <a href="mailto:${escapeHtml(item.email)}">${escapeHtml(item.email)}</a> · <a href="${escapeHtml(item.website)}" target="_blank" rel="noreferrer">Visit website ↗</a></p><div class="submission-details"><span><b>Ships to</b>${escapeHtml(item.shipping || 'Not specified')}</span><span><b>Delivery estimate</b>${escapeHtml(item.delivery || 'Not specified')}</span><span><b>Featured products</b>${escapeHtml(item.products || 'Not specified')}</span><span><b>Current offers</b>${escapeHtml(item.offers || 'None shared')}</span></div>${item.notes ? `<p class="submission-note-admin">${escapeHtml(item.notes)}</p>` : ''}</div><div class="record-actions"><button data-review-submission="${index}">${item.status === 'Reviewed' ? 'Mark new' : 'Mark reviewed'}</button><button data-delete-submission="${index}" class="record-delete">Remove</button></div></article>`).join('') : '<div class="admin-panel empty-state"><span>↙</span><b>No store introductions yet.</b><p>Submissions from the homepage will arrive here.</p></div>';
+    host.querySelectorAll('[data-review-submission]').forEach(button => button.onclick = () => { const item = submissions[Number(button.dataset.reviewSubmission)]; item.status = item.status === 'Reviewed' ? 'New' : 'Reviewed'; save('Submission status updated.', 'submissions'); });
+    host.querySelectorAll('[data-delete-submission]').forEach(button => button.onclick = () => { submissions.splice(Number(button.dataset.deleteSubmission), 1); save('Submission removed.', 'submissions'); });
   }
 
   function renderMembers() {
     const host = document.getElementById('member-list');
-    host.innerHTML = data.members.length ? data.members.map((member, index) => `<article class="admin-record member-record"><div class="record-mark member-mark">${escapeHtml((member.name || '?').slice(0, 1).toUpperCase())}</div><div class="record-main"><div class="record-kicker">JOINED ${prettyDate(member.joinedAt)}</div><h3>${escapeHtml(member.name)}</h3><p><a href="mailto:${escapeHtml(member.email)}">${escapeHtml(member.email)}</a></p><div class="member-interest"><b>LOOKING FOR</b>${escapeHtml(member.interests || 'No interests shared yet.')}</div></div><div class="record-actions"><button class="record-delete" data-delete-member="${index}">Remove</button></div></article>`).join('') : '<div class="admin-panel empty-state"><span>♡</span><b>No shopper signups yet.</b><p>Community members who join on the homepage will show up here.</p></div>';
-    host.querySelectorAll('[data-delete-member]').forEach(button => button.onclick = () => { data.members.splice(Number(button.dataset.deleteMember), 1); save('Member removed.'); });
+    host.innerHTML = members.length ? members.map((member, index) => `<article class="admin-record member-record"><div class="record-mark member-mark">${escapeHtml((member.name || '?').slice(0, 1).toUpperCase())}</div><div class="record-main"><div class="record-kicker">JOINED ${prettyDate(member.joinedAt)}</div><h3>${escapeHtml(member.name)}</h3><p><a href="mailto:${escapeHtml(member.email)}">${escapeHtml(member.email)}</a></p><div class="member-interest"><b>LOOKING FOR</b>${escapeHtml(member.interests || 'No interests shared yet.')}</div></div><div class="record-actions"><button class="record-delete" data-delete-member="${index}">Remove</button></div></article>`).join('') : '<div class="admin-panel empty-state"><span>♡</span><b>No shopper signups yet.</b><p>Community members who join on the homepage will show up here.</p></div>';
+    host.querySelectorAll('[data-delete-member]').forEach(button => button.onclick = () => { members.splice(Number(button.dataset.deleteMember), 1); save('Member removed.', 'members'); });
   }
 
   const schemas = {
@@ -135,7 +158,7 @@
   }
 
   function exportMembers() {
-    const rows = [['Name', 'Email', 'Interests', 'Joined'], ...data.members.map(member => [member.name, member.email, member.interests || '', member.joinedAt || ''])];
+    const rows = [['Name', 'Email', 'Interests', 'Joined'], ...members.map(member => [member.name, member.email, member.interests || '', member.joinedAt || ''])];
     const csv = rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
@@ -146,7 +169,6 @@
   }
 
   function renderAll() {
-    data = window.SDCData.read();
     renderOverview();
     bindContent();
     renderCategories();
@@ -162,18 +184,70 @@
   document.getElementById('save-all').onclick = () => {
     const form = document.getElementById('content-form');
     Object.assign(data, Object.fromEntries(new FormData(form).entries()));
-    save('All changes saved in this browser.');
+    save('All changes saved.');
   };
-  document.getElementById('reset-data').onclick = () => {
+  document.getElementById('reset-data').onclick = async () => {
     if (!window.confirm('Restore starter content and remove local submissions and shopper signups from this browser?')) return;
-    window.SDCData.reset();
-    data = window.SDCData.read();
-    renderAll();
-    toast('Starter content restored.');
+    if (remoteStorage) {
+      data = { ...window.SDCData.defaults };
+      submissions = [];
+      members = [];
+      await save('Starter content restored.', 'all');
+    } else {
+      window.SDCData.reset();
+      data = window.SDCData.read();
+      submissions = data.submissions || [];
+      members = data.members || [];
+      renderAll();
+      toast('Starter content restored.');
+    }
   };
   document.querySelectorAll('.admin-nav-link').forEach(link => link.addEventListener('click', () => {
     document.querySelectorAll('.admin-nav-link').forEach(item => item.classList.remove('active'));
     link.classList.add('active');
   }));
-  renderAll();
+  const localPreview = location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const logoutButton = document.createElement('button');
+  logoutButton.className = 'admin-logout';
+  logoutButton.type = 'button';
+  logoutButton.textContent = 'Log out';
+  logoutButton.onclick = async () => {
+    try { await fetch('/api/logout', { method: 'POST' }); } catch (error) { /* Local preview has no session endpoint. */ }
+    window.location.replace('/admin/login');
+  };
+  document.querySelector('.admin-top-actions').append(logoutButton);
+
+  async function initialize() {
+    try {
+      const response = await fetch('/api/admin/data', { cache: 'no-store' });
+      if (response.status === 401) return window.location.replace('/admin/login');
+      if (response.ok) {
+        const result = await response.json();
+        data = { ...window.SDCData.defaults, ...(result.content || {}) };
+        submissions = result.submissions || [];
+        members = result.members || [];
+        remoteStorage = true;
+      } else if (response.status !== 404 || !localPreview) {
+        throw new Error('Admin data could not be loaded. Check the Vercel and Redis configuration.');
+      } else {
+        data = window.SDCData.read();
+        submissions = data.submissions || [];
+        members = data.members || [];
+      }
+    } catch (error) {
+      if (!localPreview) {
+        toast(error.message || 'Admin data could not be loaded.');
+        return;
+      }
+      data = window.SDCData.read();
+      submissions = data.submissions || [];
+      members = data.members || [];
+    }
+    document.querySelector('.admin-notice p').innerHTML = '<b>Secure admin:</b> Changes, member signups, and store submissions are shared through your private Redis database. Access requires your configured admin credentials.';
+    document.querySelector('.admin-sidebar-bottom').innerHTML = '<span class="admin-status-dot"></span> Shared content is saved securely<a href="index.html">← Back to website</a>';
+    document.querySelector('.admin-footer').innerHTML = 'Store Discovery Community · Admin workspace <span>Private data is kept out of browser storage.</span>';
+    renderAll();
+  }
+
+  initialize();
 })();

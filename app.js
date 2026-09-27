@@ -1,5 +1,5 @@
 (() => {
-  const data = window.SDCData.read();
+  let data;
   const interestIcons = { 'Home & Living': '⌂', Fashion: '✳', Electronics: '⌁', 'Office Supplies': '▤', 'School Items': '✎', Gifts: '♧', Travel: '↗', Beauty: '✿', Lifestyle: '☼', Other: '＋' };
   const categoryImages = {
     'Home & Living': 'photo-1490312278390-ab64016e0aa9', Fashion: 'photo-1490481651871-ab68de25d43d', Electronics: 'photo-1519389950473-47ba0277781c',
@@ -70,28 +70,44 @@
   }
 
   function setupForms() {
-    document.getElementById('store-form').addEventListener('submit', event => {
+    document.getElementById('store-form').addEventListener('submit', async event => {
       event.preventDefault();
       const form = event.currentTarget;
       const submission = Object.fromEntries(new FormData(form).entries());
       submission.id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
       submission.submittedAt = new Date().toISOString();
       submission.status = 'New';
-      data.submissions.unshift(submission);
-      window.SDCData.write(data);
-      form.reset();
-      showToast('Thanks for introducing your store. We’ll be in touch.');
+      try {
+        const savedRemotely = await window.SDCData.submit('/api/submit-store', submission);
+        if (!savedRemotely) {
+          const localData = window.SDCData.read();
+          localData.submissions.unshift(submission);
+          window.SDCData.write(localData);
+        }
+        form.reset();
+        showToast('Thanks for introducing your store. We’ll be in touch.');
+      } catch (error) {
+        showToast(error.message || 'Your store introduction could not be sent. Please try again.');
+      }
     });
-    document.getElementById('join-form').addEventListener('submit', event => {
+    document.getElementById('join-form').addEventListener('submit', async event => {
       event.preventDefault();
       const form = event.currentTarget;
       const member = Object.fromEntries(new FormData(form).entries());
       member.id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
       member.joinedAt = new Date().toISOString();
-      data.members.unshift(member);
-      window.SDCData.write(data);
-      form.reset();
-      showToast('You’re on the list. Keep an eye on your inbox.');
+      try {
+        const savedRemotely = await window.SDCData.submit('/api/join', member);
+        if (!savedRemotely) {
+          const localData = window.SDCData.read();
+          localData.members.unshift(member);
+          window.SDCData.write(localData);
+        }
+        form.reset();
+        showToast('You’re on the list. Keep an eye on your inbox.');
+      } catch (error) {
+        showToast(error.message || 'Your sign-up could not be sent. Please try again.');
+      }
     });
   }
 
@@ -134,15 +150,20 @@
     document.querySelectorAll('.reveal').forEach(element => observer.observe(element));
   }
 
-  applyContent();
-  renderInterests();
-  renderCategories();
-  renderStores();
-  renderEvents();
-  renderFaqs();
-  setFormCategories();
-  setupForms();
-  setupNavigation();
-  setupMotion();
-  document.getElementById('year').textContent = new Date().getFullYear();
+  async function initialize() {
+    data = await window.SDCData.load();
+    applyContent();
+    renderInterests();
+    renderCategories();
+    renderStores();
+    renderEvents();
+    renderFaqs();
+    setFormCategories();
+    setupForms();
+    setupNavigation();
+    setupMotion();
+    document.getElementById('year').textContent = new Date().getFullYear();
+  }
+
+  initialize();
 })();
